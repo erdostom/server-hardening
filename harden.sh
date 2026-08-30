@@ -12,7 +12,8 @@
 #   4. UFW firewall: deny inbound except SSH/HTTP/HTTPS
 #   5. fail2ban for SSH brute-force protection
 #   6. Kernel/network sysctl hardening
-#   7. Misc: time sync, disables unneeded services, login banner off
+#   7. Docker from the official apt repo, with live-restore enabled
+#   8. Misc: AppArmor check, time sync, disables unneeded services
 #
 # It will NOT disable password auth or root login until it has verified
 # your SSH key works for the new user, so you can't lock yourself out.
@@ -40,7 +41,7 @@ die()  { echo -e "\033[1;31m[x] $*\033[0m" >&2; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
 
 # ------------------------------------------------------------------
-log "1/7 System update"
+log "1/8 System update"
 # ------------------------------------------------------------------
 apt-get update -y
 apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" upgrade -y
@@ -48,7 +49,8 @@ apt-get install -y \
   unattended-upgrades apt-listchanges \
   ufw fail2ban \
   curl ca-certificates gnupg \
-  chrony
+  chrony \
+  apparmor apparmor-utils
 
 # Unattended security upgrades (reboot handled by cron below, Sundays only).
 cat > /etc/apt/apt.conf.d/50unattended-upgrades <<'EOF'
@@ -75,7 +77,7 @@ EOF
 systemctl enable --now unattended-upgrades
 
 # ------------------------------------------------------------------
-log "2/7 Create user '$DEPLOY_USER'"
+log "2/8 Create user '$DEPLOY_USER'"
 # ------------------------------------------------------------------
 if ! id -u "$DEPLOY_USER" >/dev/null 2>&1; then
   adduser --disabled-password --gecos "" "$DEPLOY_USER"
@@ -101,7 +103,7 @@ chmod 600 "$USER_SSH_DIR/authorized_keys"
 chown -R "$DEPLOY_USER:$DEPLOY_USER" "$USER_SSH_DIR"
 
 # ------------------------------------------------------------------
-log "3/7 Harden sshd"
+log "3/8 Harden sshd"
 # ------------------------------------------------------------------
 mkdir -p /etc/ssh/sshd_config.d
 cat > /etc/ssh/sshd_config.d/00-hardening.conf <<EOF
@@ -130,7 +132,7 @@ fi
 sshd -t || die "sshd config test failed — not restarting sshd"
 
 # ------------------------------------------------------------------
-log "4/7 Firewall (UFW)"
+log "4/8 Firewall (UFW)"
 # ------------------------------------------------------------------
 ufw default deny incoming
 ufw default allow outgoing
@@ -140,7 +142,7 @@ ufw allow 443/tcp comment 'HTTPS'
 ufw --force enable
 
 # ------------------------------------------------------------------
-log "5/7 fail2ban"
+log "5/8 fail2ban"
 # ------------------------------------------------------------------
 cat > /etc/fail2ban/jail.local <<EOF
 [DEFAULT]
@@ -157,7 +159,7 @@ systemctl enable --now fail2ban
 systemctl restart fail2ban
 
 # ------------------------------------------------------------------
-log "6/7 Kernel & network hardening (sysctl)"
+log "6/8 Kernel & network hardening (sysctl)"
 # ------------------------------------------------------------------
 cat > /etc/sysctl.d/99-hardening.conf <<'EOF'
 # IP spoofing protection
@@ -210,8 +212,43 @@ EOF
 sysctl --system >/dev/null
 
 # ------------------------------------------------------------------
-log "7/7 Misc"
+log "7/8 Docker (official repo, live-restore)"
 # ------------------------------------------------------------------
+# Installing Docker here (rather than letting 'kamal setup' curl|sh it)
+# means live-restore is set before the first container ever runs.
+# Kamal detects the existing install and skips its own.
+if ! command -v docker >/dev/null 2>&1; then
+  install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  chmod a+r /etc/apt/keyrings/docker.asc
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $VERSION_CODENAME stable" \
+    > /etc/apt/sources.list.d/docker.list
+  apt-get update -y
+  apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+fi
+
+# live-restore: containers keep running while dockerd restarts (upgrades etc.)
+mkdir -p /etc/docker
+if [[ -s /etc/docker/daemon.json ]]; then
+  grep -q 'live-restore' /etc/docker/daemon.json \
+    || warn "/etc/docker/daemon.json exists — add \"live-restore\": true to it manually"
+else
+  echo '{ "live-restore": true }' > /etc/docker/daemon.json
+fi
+systemctl enable docker
+systemctl restart docker
+usermod -aG docker "$DEPLOY_USER"
+
+# ------------------------------------------------------------------
+log "8/8 Misc"
+# ------------------------------------------------------------------
+# AppArmor ships enforcing on Ubuntu; verify that's actually the case
+# (Docker's container confinement depends on it).
+systemctl enable --now apparmor
+if ! aa-status --enabled 2>/dev/null; then
+  warn "AppArmor is NOT enabled — check kernel cmdline for apparmor=1 security=apparmor"
+fi
+
 # Time sync (chrony installed above; make sure the legacy one is off)
 systemctl disable --now systemd-timesyncd 2>/dev/null || true
 systemctl enable --now chrony
@@ -244,6 +281,8 @@ cat <<EOF
    - SSH:         port $SSH_PORT, keys only (root allowed, key-only)
    - Firewall:    deny inbound except $SSH_PORT (rate-limited), 80, 443
    - fail2ban:    sshd jail, 1h bans
+   - Docker:      installed (official repo), live-restore on,
+                  $DEPLOY_USER in docker group
    - Updates:     unattended security upgrades, reboot Sun 04:00 if needed
 ================================================================
 EOF

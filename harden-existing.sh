@@ -13,6 +13,10 @@
 #   - Does NOT purge snapd (certbot is often installed via snap)
 #   - eBPF sysctl restrictions off by default (can break observability
 #     agents like Datadog system-probe, Cilium, bcc tools)
+#   - Enables Docker live-restore as the LAST step. Tries a daemon
+#     reload first (no container impact); only if that doesn't apply
+#     it, falls back to a full dockerd restart after a 5-second
+#     Ctrl-C-able warning (that restart bounces running containers).
 #
 # Run as root: sudo bash harden-existing.sh
 #
@@ -42,14 +46,15 @@ die()  { echo -e "\033[1;31m[x] $*\033[0m" >&2; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
 
 # ------------------------------------------------------------------
-log "1/7 Install tooling + configure security updates (no full upgrade)"
+log "1/8 Install tooling + configure security updates (no full upgrade)"
 # ------------------------------------------------------------------
 apt-get update -y
 apt-get install -y \
   unattended-upgrades apt-listchanges \
   ufw fail2ban \
   curl ca-certificates gnupg \
-  chrony
+  chrony \
+  apparmor apparmor-utils
 
 cat > /etc/apt/apt.conf.d/50unattended-upgrades <<'EOF'
 Unattended-Upgrade::Allowed-Origins {
@@ -80,7 +85,7 @@ if apt-get -s upgrade | grep -q '^Inst.*-security'; then
 fi
 
 # ------------------------------------------------------------------
-log "2/7 Create user '$DEPLOY_USER' (skipped if it exists)"
+log "2/8 Create user '$DEPLOY_USER' (skipped if it exists)"
 # ------------------------------------------------------------------
 if ! id -u "$DEPLOY_USER" >/dev/null 2>&1; then
   adduser --disabled-password --gecos "" "$DEPLOY_USER"
@@ -104,7 +109,7 @@ chmod 600 "$USER_SSH_DIR/authorized_keys"
 chown -R "$DEPLOY_USER:$DEPLOY_USER" "$USER_SSH_DIR"
 
 # ------------------------------------------------------------------
-log "3/7 Harden sshd"
+log "3/8 Harden sshd"
 # ------------------------------------------------------------------
 # Warn about existing users who could currently log in but have no key —
 # they lose SSH access once password auth is off.
@@ -139,7 +144,7 @@ fi
 sshd -t || die "sshd config test failed — not restarting sshd"
 
 # ------------------------------------------------------------------
-log "4/7 Firewall (UFW) — additive only, existing rules untouched"
+log "4/8 Firewall (UFW) — additive only, existing rules untouched"
 # ------------------------------------------------------------------
 # `ufw allow`/`ufw limit` only add rules; nothing here deletes or resets.
 ufw limit "$SSH_PORT/tcp" comment 'SSH (rate-limited)'
@@ -169,7 +174,7 @@ else
 fi
 
 # ------------------------------------------------------------------
-log "5/7 fail2ban"
+log "5/8 fail2ban"
 # ------------------------------------------------------------------
 cat > /etc/fail2ban/jail.local <<EOF
 [DEFAULT]
@@ -186,7 +191,7 @@ systemctl enable --now fail2ban
 systemctl restart fail2ban
 
 # ------------------------------------------------------------------
-log "6/7 Kernel & network hardening (sysctl)"
+log "6/8 Kernel & network hardening (sysctl)"
 # ------------------------------------------------------------------
 cat > /etc/sysctl.d/99-hardening.conf <<'EOF'
 # IP spoofing protection
@@ -247,15 +252,63 @@ fi
 sysctl --system >/dev/null
 
 # ------------------------------------------------------------------
-log "7/7 Misc"
+log "7/8 Misc"
 # ------------------------------------------------------------------
+# AppArmor ships enforcing on Ubuntu; verify that's actually the case
+# (Docker's container confinement depends on it).
+systemctl enable --now apparmor
+if ! aa-status --enabled 2>/dev/null; then
+  warn "AppArmor is NOT enabled — check kernel cmdline for apparmor=1 security=apparmor"
+fi
+
 systemctl disable --now systemd-timesyncd 2>/dev/null || true
 systemctl enable --now chrony
 chmod -x /etc/update-motd.d/* 2>/dev/null || true
 # NOTE: snapd intentionally NOT removed (certbot is often a snap).
 
-# Restart sshd LAST, after everything else succeeded.
+# Restart sshd after everything above succeeded. Only the Docker
+# live-restore step (which may pause on a countdown) comes after.
 systemctl restart ssh
+
+# ------------------------------------------------------------------
+log "8/8 Docker live-restore (kept last on purpose)"
+# ------------------------------------------------------------------
+if ! command -v docker >/dev/null 2>&1; then
+  warn "Docker not installed — skipping. When 'kamal setup' installs it,"
+  warn "add '\"live-restore\": true' to /etc/docker/daemon.json."
+elif docker info 2>/dev/null | grep -q 'Live Restore Enabled: true'; then
+  log "live-restore already enabled — nothing to do"
+else
+  mkdir -p /etc/docker
+  python3 - <<'PY'
+import json, os
+p = "/etc/docker/daemon.json"
+d = {}
+if os.path.exists(p) and os.path.getsize(p) > 0:
+    with open(p) as f:
+        d = json.load(f)
+d["live-restore"] = True
+with open(p, "w") as f:
+    json.dump(d, f, indent=2)
+    f.write("\n")
+PY
+  # live-restore is one of the settings dockerd applies on SIGHUP, so try
+  # a reload first — it does not touch running containers.
+  systemctl reload docker
+  sleep 2
+  if docker info 2>/dev/null | grep -q 'Live Restore Enabled: true'; then
+    log "live-restore enabled via daemon reload — containers untouched"
+  else
+    warn "Daemon reload did not apply live-restore; a full restart is needed."
+    warn "Restarting dockerd in 5 seconds — running containers WILL restart."
+    warn "Press Ctrl-C to abort (the setting stays in daemon.json, so any"
+    warn "later Docker restart will pick it up instead)."
+    sleep 5
+    systemctl restart docker
+    docker info 2>/dev/null | grep -q 'Live Restore Enabled: true' \
+      && log "live-restore enabled"
+  fi
+fi
 
 cat <<EOF
 
@@ -275,6 +328,7 @@ cat <<EOF
    - SSH:         port $SSH_PORT, keys only (root allowed, key-only)
    - Firewall:    existing UFW rules honored; added $SSH_PORT, 80, 443
    - fail2ban:    sshd jail, 1h bans
+   - Docker:      live-restore ensured (when Docker is installed)
    - Updates:     unattended security upgrades, reboot Sun 04:00 if needed
    - Pending upgrades: run 'unattended-upgrade' in a maintenance window
 ================================================================
