@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Hardening scripts for Ubuntu servers — from Bit Haiku">
+<meta name="theme-color" content="#141b26">
+<title>Server Hardening — Bit Haiku</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛡️</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Ropa+Sans&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --sea-100: #314c5d;
+    --sea-200: #203240;
+    --sea-300: #141b26;
+    --card: rgba(255, 255, 255, 0.05);
+    --card-border: rgba(255, 255, 255, 0.12);
+    --text: #f3f4f6;
+    --text-dim: #9fb3c0;
+    --amber: #fbbf24;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Ropa Sans", ui-sans-serif, system-ui, sans-serif;
+    background: linear-gradient(to bottom, var(--sea-100), var(--sea-200) 30%, var(--sea-300));
+    background-attachment: fixed;
+    color: var(--text);
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+  main { max-width: 46rem; margin: 0 auto; padding: 4rem 1.25rem 3rem; }
+  header { text-align: center; margin-bottom: 3.5rem; }
+  h1 {
+    font-size: clamp(2.5rem, 8vw, 4rem);
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    line-height: 1.1;
+  }
+  header p.tagline {
+    margin-top: 1rem;
+    font-size: 1.25rem;
+    color: var(--text-dim);
+    letter-spacing: 0.03em;
+  }
+  section.card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 0.75rem;
+    padding: 1.75rem;
+    margin-bottom: 2rem;
+  }
+  h2 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    font-family: var(--mono);
+  }
+  .for {
+    display: inline-block;
+    margin: 0.35rem 0 0.75rem;
+    font-size: 0.85rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sea-300);
+    background: var(--text-dim);
+    border-radius: 999px;
+    padding: 0.1rem 0.7rem;
+  }
+  .card p { color: var(--text); margin-bottom: 0.75rem; }
+  .card ul { margin: 0 0 1rem 1.25rem; color: var(--text-dim); }
+  .card li { margin-bottom: 0.2rem; }
+  .cmd {
+    position: relative;
+    background: rgba(0, 0, 0, 0.45);
+    border: 1px solid var(--card-border);
+    border-radius: 0.5rem;
+    padding: 0.9rem 3.2rem 0.9rem 1rem;
+    overflow-x: auto;
+  }
+  .cmd code {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    white-space: pre;
+    color: #d9e6ef;
+  }
+  .copy {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    background: var(--sea-200);
+    border: 1px solid var(--card-border);
+    border-radius: 0.375rem;
+    padding: 0.25rem 0.6rem;
+    cursor: pointer;
+  }
+  .copy:hover { color: var(--text); border-color: var(--text-dim); }
+  .src { margin-top: 0.75rem; font-size: 0.9rem; }
+  a { color: #8fc7e8; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .note {
+    border-left: 3px solid var(--amber);
+    background: rgba(251, 191, 36, 0.07);
+    border-radius: 0 0.5rem 0.5rem 0;
+    padding: 1rem 1.25rem;
+    margin-bottom: 2rem;
+    color: var(--text-dim);
+  }
+  .note strong { color: var(--amber); }
+  .note .cmd { margin-top: 0.75rem; }
+  footer {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.9rem;
+    padding-bottom: 2rem;
+    letter-spacing: 0.03em;
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>SERVER HARDENING</h1>
+    <p class="tagline">One-line hardening for Ubuntu servers — built for Kamal hosts, generic enough for any box.</p>
+  </header>
+
+  <section class="card">
+    <h2>harden-server.sh</h2>
+    <span class="for">fresh server</span>
+    <p>Full baseline for a freshly provisioned box:</p>
+    <ul>
+      <li>system update + unattended security upgrades, reboots only Sundays (and only if required)</li>
+      <li>deploy user with your SSH key; sshd locked to key-only auth (root stays available, key-only)</li>
+      <li>UFW (rate-limited SSH, 80, 443), fail2ban, kernel/network sysctl hardening</li>
+      <li>Docker from the official repo with live-restore on before the first container runs</li>
+    </ul>
+    <div class="cmd"><code>curl -fsSL https://hardening.bithaiku.com/harden-server.sh | sudo bash</code><button class="copy">copy</button></div>
+    <p class="src"><a href="/harden-server.sh">view source</a> · configure with env vars, e.g. <code>sudo SSH_PORT=2222 DEPLOY_USER=app bash</code></p>
+  </section>
+
+  <section class="card">
+    <h2>harden-existing-server.sh</h2>
+    <span class="for">server already running apps</span>
+    <p>Same baseline, minus anything that could take production down:</p>
+    <ul>
+      <li>no blanket upgrade — pending security updates reported for your maintenance window</li>
+      <li>UFW additive only: existing rules and policies are never reset; asks before enabling</li>
+      <li>no user lockouts — warns about accounts that would lose access before key-only auth</li>
+      <li>Docker live-restore enabled last, via daemon reload; full restart only after a 5s Ctrl-C-able warning</li>
+    </ul>
+    <div class="cmd"><code>curl -fsSL https://hardening.bithaiku.com/harden-existing-server.sh | sudo bash</code><button class="copy">copy</button></div>
+    <p class="src"><a href="/harden-existing-server.sh">view source</a></p>
+  </section>
+
+  <section class="card">
+    <h2>auto-updates.sh</h2>
+    <span class="for">updates only</span>
+    <p>Just unattended security upgrades plus the Sunday-if-required reboot. No firewall, ssh, user, or sysctl changes.</p>
+    <div class="cmd"><code>curl -fsSL https://hardening.bithaiku.com/auto-updates.sh | sudo bash</code><button class="copy">copy</button></div>
+    <p class="src"><a href="/auto-updates.sh">view source</a></p>
+  </section>
+
+  <div class="note">
+    <strong>Read before you run.</strong> These scripts reconfigure sshd and your firewall.
+    Each is a single top-to-bottom bash file wrapped in <code>main()</code> (a truncated
+    download executes nothing), but you should still look before piping to root:
+    <div class="cmd"><code>curl -fsSL https://hardening.bithaiku.com/harden-server.sh -o harden-server.sh
+less harden-server.sh
+sudo bash harden-server.sh</code><button class="copy">copy</button></div>
+    And before closing your session afterwards, verify SSH still works from a second terminal.
+  </div>
+
+  <footer>
+    a <a href="https://bithaiku.com">Bit Haiku</a> project
+  </footer>
+</main>
+<script>
+  document.querySelectorAll(".copy").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var code = btn.parentElement.querySelector("code").innerText;
+      navigator.clipboard.writeText(code).then(function () {
+        btn.textContent = "copied!";
+        setTimeout(function () { btn.textContent = "copy"; }, 1500);
+      });
+    });
+  });
+</script>
+</body>
+</html>
