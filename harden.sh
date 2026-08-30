@@ -4,6 +4,11 @@
 #
 # Run as root on a freshly provisioned box:
 #   sudo bash harden.sh
+# or straight from the web (must be bash, not sh — and pipe to sudo):
+#   curl -fsSL https://harden.bithaiku.com | sudo bash
+#   curl -fsSL https://harden.bithaiku.com | sudo SSH_PORT=2222 DEPLOY_USER=app bash
+# The whole script is wrapped in main() called on the last line, so a
+# partially downloaded script executes nothing.
 #
 # What it does:
 #   1. Full system update + unattended security upgrades
@@ -34,7 +39,9 @@ log()  { echo -e "\n\033[1;32m==> $*\033[0m"; }
 warn() { echo -e "\033[1;33m[!] $*\033[0m"; }
 die()  { echo -e "\033[1;31m[x] $*\033[0m" >&2; exit 1; }
 
-[[ $EUID -eq 0 ]] || die "Run as root: sudo bash $0"
+main() {
+
+[[ $EUID -eq 0 ]] || die "Run as root: sudo bash harden.sh (or curl ... | sudo bash)"
 . /etc/os-release
 [[ ${ID:-} == "ubuntu" ]] || die "This script targets Ubuntu (detected: ${ID:-unknown})"
 
@@ -286,3 +293,7 @@ cat <<EOF
    - Updates:     unattended security upgrades, reboot Sun 04:00 if needed
 ================================================================
 EOF
+
+}
+
+main "$@"
