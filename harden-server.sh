@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# harden.sh — baseline hardening for a fresh Ubuntu server (22.04 / 24.04).
+# harden-server.sh — baseline hardening for a fresh Ubuntu server (22.04 / 24.04).
 #
 # Run as root on a freshly provisioned box:
-#   sudo bash harden.sh
+#   sudo bash harden-server.sh
 # or straight from the web (must be bash, not sh — and pipe to sudo):
-#   curl -fsSL https://harden.bithaiku.com | sudo bash
-#   curl -fsSL https://harden.bithaiku.com | sudo SSH_PORT=2222 DEPLOY_USER=app bash
+#   curl -fsSL https://hardening.bithaiku.com/harden-server.sh | sudo bash
+#   curl -fsSL https://hardening.bithaiku.com/harden-server.sh | sudo SSH_PORT=2222 DEPLOY_USER=app bash
 # The whole script is wrapped in main() called on the last line, so a
 # partially downloaded script executes nothing.
 #
@@ -41,7 +41,7 @@ die()  { echo -e "\033[1;31m[x] $*\033[0m" >&2; exit 1; }
 
 main() {
 
-[[ $EUID -eq 0 ]] || die "Run as root: sudo bash harden.sh (or curl ... | sudo bash)"
+[[ $EUID -eq 0 ]] || die "Run as root: sudo bash harden-server.sh (or curl ... | sudo bash)"
 . /etc/os-release
 [[ ${ID:-} == "ubuntu" ]] || die "This script targets Ubuntu (detected: ${ID:-unknown})"
 

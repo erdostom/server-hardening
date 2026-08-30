@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# harden-existing.sh — hardening for an Ubuntu server ALREADY running apps.
+# harden-existing-server.sh — hardening for an Ubuntu server ALREADY running apps.
 #
-# Production-safe variant of harden.sh:
+# Production-safe variant of harden-server.sh:
 #   - No blanket `apt upgrade` (only installs the tools it needs; ongoing
 #     security patches handled by unattended-upgrades)
 #   - Honors existing UFW rules: never resets, never changes default
@@ -18,7 +18,12 @@
 #     it, falls back to a full dockerd restart after a 5-second
 #     Ctrl-C-able warning (that restart bounces running containers).
 #
-# Run as root: sudo bash harden-existing.sh
+# Run as root: sudo bash harden-existing-server.sh
+# or straight from the web (must be bash, not sh — and pipe to sudo):
+#   curl -fsSL https://hardening.bithaiku.com/harden-existing-server.sh | sudo bash
+# The whole script is wrapped in main() called on the last line, so a
+# partially downloaded script executes nothing. The UFW confirmation
+# prompt reads from /dev/tty, so it works when piped too.
 #
 # Still verify from a second terminal that SSH works before logging out.
 
@@ -39,7 +44,9 @@ log()  { echo -e "\n\033[1;32m==> $*\033[0m"; }
 warn() { echo -e "\033[1;33m[!] $*\033[0m"; }
 die()  { echo -e "\033[1;31m[x] $*\033[0m" >&2; exit 1; }
 
-[[ $EUID -eq 0 ]] || die "Run as root: sudo bash $0"
+main() {
+
+[[ $EUID -eq 0 ]] || die "Run as root: sudo bash harden-existing-server.sh (or curl ... | sudo bash)"
 . /etc/os-release
 [[ ${ID:-} == "ubuntu" ]] || die "This script targets Ubuntu (detected: ${ID:-unknown})"
 
@@ -159,8 +166,10 @@ else
   warn "Only $SSH_PORT, 80, 443 are allowed. Anything else above needs a"
   warn "'ufw allow' rule BEFORE enabling, or it becomes unreachable."
   warn "(Docker-published container ports bypass UFW and keep working.)"
-  if [[ -t 0 ]]; then
-    read -r -p "Set default-deny and enable UFW now? [y/N] " reply
+  # Read from /dev/tty, not stdin — stdin is the script itself under
+  # 'curl | bash', but the controlling terminal can still answer.
+  if [[ -r /dev/tty ]]; then
+    read -r -p "Set default-deny and enable UFW now? [y/N] " reply < /dev/tty
     if [[ $reply =~ ^[Yy]$ ]]; then
       ufw default deny incoming
       ufw default allow outgoing
@@ -169,7 +178,7 @@ else
       warn "UFW left disabled. Enable later with: ufw default deny incoming && ufw enable"
     fi
   else
-    warn "Non-interactive session — UFW left disabled. Review and enable manually."
+    warn "No terminal available — UFW left disabled. Review and enable manually."
   fi
 fi
 
@@ -333,3 +342,7 @@ cat <<EOF
    - Pending upgrades: run 'unattended-upgrade' in a maintenance window
 ================================================================
 EOF
+
+}
+
+main "$@"
